@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heapsimulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: reglage överst, sedan fyra minneskartor i 2×2 där varje rad är en sida på 1 024 byte. */
+:root {
+  --bg: #eef0ec;
+  --surface: #fbfcfa;
+  --ink: #1b2227;
+  --muted: #5d6a70;
+  --line: #d3d8d3;
+  --used: #2c7396;
+  --hdr: #12384b;
+  --pad: #c97a12;
+  --pad-bg: #f6e2c0;
+  --free: #e3e7e2;
+  --fhdr: #c3cbc8;
+  --slot: #c5dde8;
+  --hl: #c92a63;
+  --fail: #b3261e;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #12171a; --surface: #1a2125; --ink: #e4e9eb; --muted: #94a2a9; --line: #2e383d;
+    --used: #4d9cc0; --hdr: #b5dcee; --pad: #e3a03c; --pad-bg: #4a3a1c; --free: #252e33;
+    --fhdr: #3d4a50; --slot: #24424f; --hl: #ff6b9d; --fail: #ff8a80;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #12171a; --surface: #1a2125; --ink: #e4e9eb; --muted: #94a2a9; --line: #2e383d;
+  --used: #4d9cc0; --hdr: #b5dcee; --pad: #e3a03c; --pad-bg: #4a3a1c; --free: #252e33;
+  --fhdr: #3d4a50; --slot: #24424f; --hl: #ff6b9d; --fail: #ff8a80;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font-body); }
+main { max-width: 1280px; margin: 0 auto; padding: 28px 20px 48px; display: flex; flex-direction: column; gap: 20px; }
+h1 { font: 600 26px/1.2 var(--font-mono); margin: 0 0 6px; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font: 600 16px/1.3 var(--font-mono); margin: 0; }
+p { margin: 0; }
+.lead { color: var(--muted); max-width: 68ch; }
+code, .mono { font-family: var(--font-mono); }
+
+.controls { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: flex-end; }
+.group { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: flex-end; }
+.field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+.field output { color: var(--ink); font-family: var(--font-mono); }
+input[type="number"], select, button {
+  font: 500 14px/1 var(--font-mono); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; height: 34px; padding: 0 10px;
+}
+input[type="number"] { width: 92px; }
+button { cursor: pointer; background: var(--surface); border-color: var(--muted); }
+button:hover { border-color: var(--ink); }
+button.primary { background: var(--used); border-color: var(--used); color: #fff; }
+button.primary:hover { filter: brightness(1.1); }
+input[type="range"] { width: 120px; height: 34px; margin: 0; accent-color: var(--used); }
+:focus-visible { outline: 2px solid var(--hl); outline-offset: 2px; }
+.status { margin-left: auto; font: 13px var(--font-mono); color: var(--muted); align-self: center; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 18px; height: 12px; border-radius: 2px; display: inline-block; }
+.sw.used, .bar .used { background: var(--used); }
+.sw.hdr, .bar .hdr { background: var(--hdr); }
+.sw.pad, .bar .pad { background: repeating-linear-gradient(135deg, var(--pad) 0 2px, var(--pad-bg) 2px 5px); }
+.sw.free, .bar .free { background: var(--free); }
+.sw.slot { background: var(--slot); }
+
+.panels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 860px) { .panels { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.panel .desc { color: var(--muted); font-size: 13.5px; min-height: 4.5em; }
+@media (max-width: 860px) { .panel .desc { min-height: 0; } }
+canvas { display: block; width: 100%; height: 352px; touch-action: manipulation; }
+.bar { display: flex; height: 10px; border-radius: 2px; overflow: hidden; background: var(--free); }
+.bar i { display: block; height: 100%; }
+.nums { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 10px; margin: 0; font-size: 12px; color: var(--muted); }
+.nums div { min-width: 0; }
+.nums dt { display: flex; align-items: center; gap: 5px; }
+.nums dd { margin: 0; font: 500 14px var(--font-mono); color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.foot { display: flex; flex-wrap: wrap; gap: 4px 20px; font: 13px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; border-top: 1px solid var(--line); padding-top: 8px; }
+.foot b { color: var(--ink); font-weight: 500; }
+.foot .last { margin-left: auto; }
+.foot .failed { color: var(--fail); }
+.foot .hasfails b { color: var(--fail); }
+
+#tip { position: fixed; z-index: 10; pointer-events: none; background: var(--ink); color: var(--bg); font: 12px/1.45 var(--font-mono); padding: 6px 9px; border-radius: 4px; max-width: 320px; display: none; }
+#tip em { font-style: normal; opacity: .7; display: block; }
+.notes { color: var(--muted); font-size: 13.5px; max-width: 76ch; }
+.notes summary { cursor: pointer; color: var(--ink); font-weight: 500; }
+.notes ul { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Heapsimulator</h1>
+    <p class="lead">Samma följd av <code>malloc</code> och <code>free</code> körs genom fyra allokatorer över en heap på 16 KiB. Varje rad i kartorna är 1 024 byte. Peka på ett block för detaljer, klicka på det för att frigöra det i alla fyra.</p>
+  </header>
+
+  <section class="controls" aria-label="Reglage">
+    <div class="group">
+      <label class="field" for="size">Storlek (byte)
+        <input type="number" id="size" min="1" max="16384" value="100">
+      </label>
+      <button class="primary" id="btn-malloc" type="button">malloc</button>
+      <button id="btn-free" type="button">free slumpvis</button>
+    </div>
+    <div class="group">
+      <label class="field" for="workload">Arbetslast
+        <select id="workload">
+          <option value="mixed">Blandade storlekar</option>
+          <option value="small">Bara små objekt</option>
+          <option value="holes">Hålslagning</option>
+          <option value="lifo">Stack (sist in, först ut)</option>
+          <option value="grow">Växande buffertar</option>
+        </select>
+      </label>
+      <button class="primary" id="btn-run" type="button">Kör</button>
+      <button id="btn-step" type="button">Ett steg</button>
+      <label class="field" for="speed">Hastighet <output id="speed-out">8 steg/s</output>
+        <input type="range" id="speed" min="1" max="60" value="8">
+      </label>
+      <label class="field" for="fill">Fyllnadsmål <output id="fill-out">55 %</output>
+        <input type="range" id="fill" min="20" max="95" step="5" value="55">
+      </label>
+      <button id="btn-reset" type="button">Töm heapen</button>
+    </div>
+    <div class="status" id="status" aria-live="off"></div>
+  </section>
+
+  <div class="legend" aria-label="Teckenförklaring">
+    <span><i class="sw used"></i>Begärt minne</span>
+    <span><i class="sw hdr"></i>Header</span>
+    <span><i class="sw pad"></i>Spill (intern fragmentering)</span>
+    <span><i class="sw free"></i>Fritt</span>
+    <span><i class="sw slot"></i>Ledigt fack i en storleksklass</span>
+  </div>
+
+  <section class="panels" id="panels"></section>
+
+  <details class="notes">
+    <summary>Förenklingar i modellen</summary>
+    <ul>
+      <li>Fri lista: header på 16 byte, nyttolast avrundad till 16 byte, minsta block 32 byte. Ett fritt block delas om resten blir minst 32 byte, och fria grannar slås ihop direkt.</li>
+      <li>Best-fit väljer det minsta fria block som räcker. Riktiga allokatorer som dlmalloc och glibc når ungefär samma val med fria listor sorterade efter storlek.</li>
+      <li>Buddy: blockstorlekar från 16 byte till 16 KiB. Blockets storlek bokförs utanför heapen, så det finns ingen header.</li>
+      <li>Storleksklasser: 16, 32, 48, 64, 96, 128, 192, 256, 384 och 512 byte. Större allokeringar får sammanhängande hela sidor. En sida vars alla fack är fria blir ledig igen. Metadata ligger utanför heapen.</li>
+      <li>Hålslagning allokerar 224 block på 40 byte, frigör vartannat och försöker sedan 30 gånger med 200 byte.</li>
+      <li>Trådcachar, flera arenor och återlämning av minne till operativsystemet ingår inte.</li>
+    </ul>
+  </details>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script>
+const HEAP = 16384, HDR = 16, ALIGN = 16, PAGE = 1024;
+const MINO = 4, MAXO = 14;
+const CLASSES = [16, 32, 48, 64, 96, 128, 192, 256, 384, 512];
+const up = (n, a) => Math.ceil(n / a) * a;
+const hex = n => '0x' + n.toString(16).padStart(4, '0');
+const hexRows = () => Array.from({ length: HEAP / PAGE }, (_, r) => (r * PAGE).toString(16).padStart(4, '0'));
+
+/* Fri lista med headers i heapen. policy: 'first' eller 'best'. */
+class FreeListAlloc {
+  constructor(policy) { this.policy = policy; this.reset(); }
+  reset() { this.blocks = [{ off: 0, size: HEAP, free: true }]; this.fails = 0; }
+  malloc(id, req) {
+    const need = HDR + up(Math.max(req, 16), ALIGN);
+    let pick = -1;
+    for (let i = 0; i < this.blocks.length; i++) {
+      const b = this.blocks[i];
+      if (!b.free || b.size < need) continue;
+      if (this.policy === 'first') { pick = i; break; }
+      if (pick < 0 || b.size < this.blocks[pick].size) pick = i;
+    }
+    if (pick < 0) { this.fails++; return null; }
+    const b = this.blocks[pick];
+    if (b.size - need >= HDR + 16) {
+      this.blocks.splice(pick + 1, 0, { off: b.off + need, size: b.size - need, free: true });
+      b.size = need;
+    }
+    b.free = false; b.id = id; b.req = req;
+    return b.off + HDR;
+  }
+  free(id) {
+    const i = this.blocks.findIndex(b => !b.free && b.id === id);
+    if (i < 0) return false;
+    const b = this.blocks[i];
+    b.free = true; delete b.id; delete b.req;
+    if (i + 1 < this.blocks.length && this.blocks[i + 1].free) {
+      b.size += this.blocks[i + 1].size; this.blocks.splice(i + 1, 1);
+    }
+    if (i > 0 && this.blocks[i - 1].free) {
+      this.blocks[i - 1].size += b.size; this.blocks.splice(i, 1);
+    }
+    return true;
+  }
+  rowLabels() { return hexRows(); }
+  view() {
+    return this.blocks.map(b => {
+      const a = b.off, e = b.off + b.size;
+      if (b.free) return {
+        a, b: e, id: null,
+        parts: [{ a, b: a + HDR, kind: 'fhdr' }, { a: a + HDR, b: e, kind: 'free' }],
+        tip: ['Fritt block', `${b.size} B varav ${HDR} B header`]
+      };
+      const pad = b.size - HDR - b.req;
+      const parts = [{ a, b: a + HDR, kind: 'hdr' }, { a: a + HDR, b: a + HDR + b.req, kind: 'used' }];
+      if (pad) parts.push({ a: a + HDR + b.req, b: e, kind: 'pad' });
+      return {
+        a, b: e, id: b.id, parts,
+        tip: [`#${b.id} · malloc(${b.req}) → ${hex(a + HDR)}`, `Block ${b.size} B = ${HDR} header + ${b.req} + ${pad} spill`]
+      };
+    });
+  }
+  stats() {
+    let req = 0, meta = 0, pad = 0, free = 0, big = 0, live = 0;
+    for (const b of this.blocks) {
+      if (b.free) { free += b.size; big = Math.max(big, b.size); }
+      else { live++; req += b.req; meta += HDR; pad += b.size - HDR - b.req; }
+    }
+    return { req, meta, pad, free, largest: big >= HDR + 16 ? big - HDR : 0, fails: this.fails, live };
+  }
+}
+
+/* Buddy-allokator. Blockstorlekar 2^4..2^14, storleken bokförs utanför heapen. */
+class BuddyAlloc {
+  constructor() { this.reset(); }
+  reset() {
+    this.freeL = Array.from({ length: MAXO + 1 }, () => new Set());
+    this.freeL[MAXO].add(0);
+    this.live = new Map(); this.fails = 0;
+  }
+  malloc(id, req) {
+    let o = MINO;
+    while ((1 << o) < req) o++;
+    let j = o;
+    while (j <= MAXO && this.freeL[j].size === 0) j++;
+    if (o > MAXO || j > MAXO) { this.fails++; return null; }
+    const off = Math.min(...this.freeL[j]);
+    this.freeL[j].delete(off);
+    while (j > o) { j--; this.freeL[j].add(off + (1 << j)); }
+    this.live.set(id, { off, order: o, req });
+    return off;
+  }
+  free(id) {
+    const e = this.live.get(id);
+    if (!e) return false;
+    this.live.delete(id);
+    let { off, order } = e;
+    while (order < MAXO) {
+      const bud = off ^ (1 << order);
+      if (!this.freeL[order].has(bud)) break;
+      this.freeL[order].delete(bud);
+      off = Math.min(off, bud); order++;
+    }
+    this.freeL[order].add(off);
+    return true;
+  }
+  rowLabels() { return hexRows(); }
+  view() {
+    const out = [];
+    for (const [id, e] of this.live) {
+      const size = 1 << e.order, a = e.off, pad = size - e.req;
+      const parts = [{ a, b: a + e.req, kind: 'used' }];
+      if (pad) parts.push({ a: a + e.req, b: a + size, kind: 'pad' });
+      out.push({ a, b: a + size, id, parts, tip: [`#${id} · malloc(${e.req}) → ${hex(a)}`, `Block ${size} B = ${e.req} + ${pad} spill`] });
+    }
+    for (let o = MINO; o <= MAXO; o++) for (const a of this.freeL[o]) {
+      const size = 1 << o;
+      out.push({ a, b: a + size, id: null, parts: [{ a, b: a + size, kind: 'free' }], tip: ['Fritt block', `${size} B (2^${o})`] });
+    }
+    return out.sort((x, y) => x.a - y.a);
+  }
+  stats() {
+    let req = 0, pad = 0, free = 0, big = 0;
+    for (const e of this.live.values()) { req += e.req; pad += (1 << e.order) - e.req; }
+    for (let o = MINO; o <= MAXO; o++) if (this.freeL[o].size) { free += this.freeL[o].size << o; big = 1 << o; }
+    return { req, meta: 0, pad, free, largest: big, fails: this.fails, live: this.live.size };
+  }
+}
+
+/* Storleksklasser: varje sida hör till en klass och delas i lika stora fack. */
+class SlabAlloc {
+  constructor() { this.reset(); }
+  reset() {
+    this.pages = Array.from({ length: HEAP / PAGE }, () => ({ kind: 'free' }));
+    this.live = new Map(); this.fails = 0;
+  }
+  malloc(id, req) {
+    if (req <= CLASSES[CLASSES.length - 1]) {
+      const cls = CLASSES.find(c => c >= req);
+      let p = this.pages.findIndex(g => g.kind === 'slab' && g.cls === cls && g.used < g.slots.length);
+      if (p < 0) {
+        p = this.pages.findIndex(g => g.kind === 'free');
+        if (p < 0) { this.fails++; return null; }
+        this.pages[p] = { kind: 'slab', cls, slots: new Array(Math.floor(PAGE / cls)).fill(null), used: 0 };
+      }
+      const g = this.pages[p], s = g.slots.indexOf(null);
+      g.slots[s] = { id, req }; g.used++;
+      this.live.set(id, { page: p, slot: s });
+      return p * PAGE + s * cls;
+    }
+    const n = Math.ceil(req / PAGE);
+    let run = 0, start = -1;
+    for (let i = 0; i < this.pages.length; i++) {
+      run = this.pages[i].kind === 'free' ? run + 1 : 0;
+      if (run === n) { start = i - n + 1; break; }
+    }
+    if (start < 0) { this.fails++; return null; }
+    for (let i = 0; i < n; i++) this.pages[start + i] = { kind: 'large', id, head: start, n, req };
+    this.live.set(id, { page: start, n });
+    return start * PAGE;
+  }
+  free(id) {
+    const e = this.live.get(id);
+    if (!e) return false;
+    this.live.delete(id);
+    if (e.n) { for (let i = 0; i < e.n; i++) this.pages[e.page + i] = { kind: 'free' }; return true; }
+    const g = this.pages[e.page];
+    g.slots[e.slot] = null; g.used--;
+    if (g.used === 0) this.pages[e.page] = { kind: 'free' };
+    return true;
+  }
+  rowLabels() { return this.pages.map(g => g.kind === 'slab' ? String(g.cls) : g.kind === 'large' ? 'stor' : '·'); }
+  view() {
+    const out = [];
+    this.pages.forEach((g, p) => {
+      const base = p * PAGE;
+      if (g.kind === 'free') {
+        out.push({ a: base, b: base + PAGE, id: null, parts: [{ a: base, b: base + PAGE, kind: 'free' }], tip: ['Ledig sida', `${PAGE} B, kan tilldelas valfri klass`] });
+      } else if (g.kind === 'large') {
+        if (g.head !== p) return;
+        const size = g.n * PAGE, pad = size - g.req;
+        const parts = [{ a: base, b: base + g.req, kind: 'used' }];
+        if (pad) parts.push({ a: base + g.req, b: base + size, kind: 'pad' });
+        out.push({ a: base, b: base + size, id: g.id, parts, tip: [`#${g.id} · malloc(${g.req}) → ${hex(base)}`, `${g.n} hela sidor = ${g.req} + ${pad} spill`] });
+      } else {
+        g.slots.forEach((s, i) => {
+          const a = base + i * g.cls, e = a + g.cls;
+          if (!s) { out.push({ a, b: e, id: null, parts: [{ a, b: e, kind: 'slot' }], tip: ['Ledigt fack', `Klass ${g.cls} B`] }); return; }
+          const pad = g.cls - s.req;
+          const parts = [{ a, b: a + s.req, kind: 'used' }];
+          if (pad) parts.push({ a: a + s.req, b: e, kind: 'pad' });
+          out.push({ a, b: e, id: s.id, parts, tip: [`#${s.id} · malloc(${s.req}) → ${hex(a)}`, `Fack ${g.cls} B = ${s.req} + ${pad} spill`] });
+        });
+        const end = base + g.slots.length * g.cls;
+        if (end < base + PAGE) out.push({ a: end, b: base + PAGE, id: null, parts: [{ a: end, b: base + PAGE, kind: 'pad' }], tip: ['Rest av sidan', `${base + PAGE - end} B räcker inte till ett fack på ${g.cls} B`] });
+      }
+    });
+    return out;
+  }
+  stats() {
+    let req = 0, pad = 0, free = 0, run = 0, bestRun = 0, bigSlot = 0;
+    this.pages.forEach((g, p) => {
+      if (g.kind === 'free') { free += PAGE; run++; bestRun = Math.max(bestRun, run); return; }
+      run = 0;
+      if (g.kind === 'large') { if (g.head === p) { req += g.req; pad += g.n * PAGE - g.req; } return; }
+      pad += PAGE - g.slots.length * g.cls;
+      for (const s of g.slots) {
+        if (s) { req += s.req; pad += g.cls - s.req; }
+        else { free += g.cls; bigSlot = Math.max(bigSlot, g.cls); }
+      }
+    });
+    return { req, meta: 0, pad, free, largest: bestRun ? bestRun * PAGE : bigSlot, fails: this.fails, live: this.live.size };
+  }
+}
+
+/* Kör samma operationer genom alla allokatorer. */
+class Sim {
+  constructor() {
+    this.allocs = [new FreeListAlloc('first'), new FreeListAlloc('best'), new BuddyAlloc(), new SlabAlloc()];
+    this.reset();
+  }
+  reset() { this.allocs.forEach(a => a.reset()); this.live = new Map(); this.nextId = 1; this.steps = 0; }
+  malloc(req) {
+    const id = this.nextId++;
+    const res = this.allocs.map(a => a.malloc(id, req));
+    if (res.some(r => r !== null)) this.live.set(id, { req });
+    this.steps++;
+    return { op: 'malloc', id, req, res };
+  }
+  free(id) {
+    const e = this.live.get(id);
+    if (!e) return null;
+    const res = this.allocs.map(a => a.free(id));
+    this.live.delete(id);
+    this.steps++;
+    return { op: 'free', id, req: e.req, res };
+  }
+  liveBytes() { let s = 0; for (const v of this.live.values()) s += v.req; return s; }
+  randomLive() { const k = [...this.live.keys()]; return k[Math.floor(Math.random() * k.length)]; }
+}
+
+/* Arbetslaster. Varje anrop utför en operation och returnerar den (eller null). */
+function makeWorkload(kind, sim, fill) {
+  const R = Math.random, ri = (a, b) => a + Math.floor(R() * (b - a + 1));
+  const mixed = () => { const r = R(); return r < 0.7 ? ri(8, 128) : r < 0.95 ? ri(129, 600) : ri(601, 3000); };
+  const steer = size => () => {
+    const p = sim.liveBytes() < fill() * HEAP ? 0.75 : 0.25;
+    return sim.live.size === 0 || R() < p ? sim.malloc(size()) : sim.free(sim.randomLive());
+  };
+  if (kind === 'small') return steer(() => ri(8, 96));
+  if (kind === 'holes') {
+    let phase = 0, ids = [], k = 0;
+    return () => {
+      if (phase === 0) {
+        const r = sim.malloc(40);
+        if (sim.live.has(r.id)) ids.push(r.id);
+        if (++k >= 224) { phase = 1; k = 0; }
+        return r;
+      }
+      if (phase === 1) {
+        const id = ids[k]; k += 2;
+        if (k >= ids.length) { phase = 2; k = 0; }
+        return sim.free(id);
+      }
+      if (phase === 2) { if (++k >= 30) phase = 3; return sim.malloc(200); }
+      const any = sim.live.keys().next();
+      if (any.done) { phase = 0; k = 0; ids = []; return null; }
+      return sim.free(any.value);
+    };
+  }
+  if (kind === 'lifo') {
+    let stack = [], pushing = true, floor = 0;
+    return () => {
+      if (!pushing && stack.length <= floor) pushing = true;
+      if (pushing) {
+        const r = sim.malloc(mixed());
+        if (sim.live.has(r.id)) stack.push(r.id);
+        if (sim.liveBytes() >= fill() * HEAP || !sim.live.has(r.id)) { pushing = false; floor = ri(0, stack.length >> 1); }
+        return r;
+      }
+      return sim.free(stack.pop());
+    };
+  }
+  if (kind === 'grow') {
+    const bufs = Array.from({ length: 8 }, () => ({ id: null, size: 0 }));
+    let pending = null, smalls = [];
+    return () => {
+      if (pending !== null) { const id = pending; pending = null; return sim.free(id); }
+      if (R() < 0.3) {
+        if (smalls.length >= 50) return sim.free(smalls.splice(ri(0, smalls.length - 1), 1)[0]);
+        const r = sim.malloc(ri(16, 64));
+        if (sim.live.has(r.id)) smalls.push(r.id);
+        return r;
+      }
+      const b = bufs[ri(0, bufs.length - 1)];
+      if (b.id === null) {
+        b.size = ri(16, 48);
+        const r = sim.malloc(b.size);
+        b.id = sim.live.has(r.id) ? r.id : null;
+        return r;
+      }
+      if (b.size > 2500) { const id = b.id; b.id = null; return sim.free(id); }
+      const ns = Math.ceil(b.size * 1.5), r = sim.malloc(ns);
+      pending = b.id;
+      if (sim.live.has(r.id)) { b.id = r.id; b.size = ns; } else b.id = null;
+      return r;
+    };
+  }
+  return steer(mixed);
+}
+
+
+</script>
+<script>
+(function () {
+  const META = [
+    { name: 'First-fit', desc: 'En fri lista i adressordning. Det första fria block som räcker tas och delas. Varje block har en header på 16 byte, och fria grannar slås ihop.' },
+    { name: 'Best-fit', desc: 'Samma heap och headers, men det minsta fria block som räcker väljs. Ungefär så väljer dlmalloc och glibc, med fria listor sorterade efter storlek.' },
+    { name: 'Buddy', desc: 'Block är alltid tvåpotenser. Ett block halveras tills storleken passar, och två fria halvor slås ihop igen. Ingen header i heapen.' },
+    { name: 'Storleksklasser', desc: 'Varje sida ägnas åt en storleksklass och delas i lika stora fack. Över 512 byte ges hela sidor. Ingen header. Siffran till vänster är sidans klass.' }
+  ];
+  const ROWH = 22, GUT = 40, ROWS = HEAP / PAGE;
+  const fmt = n => n.toLocaleString('sv-SE');
+  const $ = id => document.getElementById(id);
+
+  const sim = new Sim();
+  let hoverId = null, lastId = null, lastOp = null, timer = null, gen = null;
+  const fillFrac = () => +$('fill').value / 100;
+
+  /* Bygg panelerna */
+  const panels = sim.allocs.map((alloc, i) => {
+    const el = document.createElement('article');
+    el.className = 'panel';
+    el.innerHTML =
+      `<h2>${META[i].name}</h2><p class="desc">${META[i].desc}</p>` +
+      `<canvas role="img" aria-label="Minneskarta för ${META[i].name}"></canvas>` +
+      `<div class="bar"><i class="used"></i><i class="hdr"></i><i class="pad"></i></div>` +
+      `<dl class="nums">` +
+      `<div><dt><i class="sw used"></i>Begärt</dt><dd data-k="req"></dd></div>` +
+      `<div><dt><i class="sw hdr"></i>Header</dt><dd data-k="meta"></dd></div>` +
+      `<div><dt><i class="sw pad"></i>Spill</dt><dd data-k="pad"></dd></div>` +
+      `<div><dt><i class="sw free"></i>Fritt</dt><dd data-k="free"></dd></div></dl>` +
+      `<div class="foot"><span>Största möjliga malloc <b data-k="largest"></b></span>` +
+      `<span data-k="failwrap">Misslyckade <b data-k="fails"></b></span><span class="last" data-k="last"></span></div>`;
+    $('panels').appendChild(el);
+    const q = k => el.querySelector(`[data-k="${k}"]`);
+    const p = { alloc, el, canvas: el.querySelector('canvas'), bar: el.querySelectorAll('.bar i'), q, view: [] };
+    p.canvas.addEventListener('mousemove', e => onHover(p, e));
+    p.canvas.addEventListener('mouseleave', () => { hoverId = null; $('tip').style.display = 'none'; drawAll(); });
+    p.canvas.addEventListener('click', e => {
+      const b = hit(p, e);
+      if (b && b.id !== null) { record(sim.free(b.id)); hoverId = null; $('tip').style.display = 'none'; render(); }
+    });
+    return p;
+  });
+
+  /* Färger hämtas från temats variabler vid varje omritning */
+  let pattern = { key: '', pat: null };
+  function colors() {
+    const cs = getComputedStyle(document.documentElement), c = {};
+    for (const k of ['used', 'hdr', 'pad', 'pad-bg', 'free', 'fhdr', 'slot', 'hl', 'ink', 'muted']) c[k] = cs.getPropertyValue('--' + k).trim();
+    return c;
+  }
+  function hatch(ctx, C) {
+    const key = C.pad + C['pad-bg'];
+    if (pattern.key !== key) {
+      const t = document.createElement('canvas'); t.width = t.height = 6;
+      const x = t.getContext('2d');
+      x.fillStyle = C['pad-bg']; x.fillRect(0, 0, 6, 6);
+      x.strokeStyle = C.pad; x.lineWidth = 1.6;
+      x.beginPath(); x.moveTo(-1, 7); x.lineTo(7, -1); x.moveTo(-4, 4); x.lineTo(4, -4); x.moveTo(2, 10); x.lineTo(10, 2); x.stroke();
+      pattern = { key, pat: ctx.createPattern(t, 'repeat') };
+    }
+    return pattern.pat;
+  }
+
+  function draw(p, C) {
+    const cv = p.canvas, W = cv.clientWidth, H = ROWS * ROWH;
+    if (!W) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const gw = W - GUT;
+    ctx.font = '10px "IBM Plex Mono", ui-monospace, Menlo, monospace';
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'right'; ctx.fillStyle = C.muted;
+    p.alloc.rowLabels().forEach((t, r) => ctx.fillText(t, GUT - 7, r * ROWH + ROWH / 2));
+
+    const seg = (a, b, A, B, fn) => {
+      for (let r = Math.floor(a / PAGE); r * PAGE < b; r++) {
+        const s = Math.max(a, r * PAGE), e = Math.min(b, (r + 1) * PAGE);
+        let x0 = GUT + (s - r * PAGE) / PAGE * gw, x1 = GUT + (e - r * PAGE) / PAGE * gw;
+        if (s === A) x0 += 0.5;
+        if (e === B) x1 -= 0.5;
+        fn(x0, r * ROWH + 1, Math.max(x1 - x0, 0.6), ROWH - 3);
+      }
+    };
+    const fills = { used: C.used, hdr: C.hdr, free: C.free, fhdr: C.fhdr, slot: C.slot };
+    for (const b of p.view) for (const part of b.parts) {
+      ctx.fillStyle = part.kind === 'pad' ? hatch(ctx, C) : fills[part.kind];
+      seg(part.a, part.b, b.a, b.b, (x, y, w, h) => ctx.fillRect(x, y, w, h));
+    }
+    const mark = (id, color, lw) => {
+      if (id === null) return;
+      const b = p.view.find(v => v.id === id);
+      if (!b) return;
+      ctx.strokeStyle = color; ctx.lineWidth = lw;
+      seg(b.a, b.b, b.a, b.b, (x, y, w, h) => ctx.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1));
+    };
+    if (lastId !== hoverId) mark(lastId, C.ink, 1.5);
+    mark(hoverId, C.hl, 2);
+  }
+  function drawAll() { const C = colors(); panels.forEach(p => draw(p, C)); }
+
+  function render() {
+    panels.forEach((p, i) => {
+      p.view = p.alloc.view();
+      const s = p.alloc.stats();
+      [s.req, s.meta, s.pad].forEach((v, k) => { p.bar[k].style.width = (v / HEAP * 100) + '%'; });
+      for (const k of ['req', 'meta', 'pad', 'free', 'largest']) p.q(k).textContent = fmt(s[k]) + ' B';
+      p.q('fails').textContent = fmt(s.fails);
+      p.q('failwrap').className = s.fails ? 'hasfails' : '';
+      const last = p.q('last');
+      last.className = 'last';
+      if (!lastOp) last.textContent = '';
+      else if (lastOp.op === 'free') last.textContent = lastOp.res[i] ? `free(#${lastOp.id})` : '';
+      else if (lastOp.res[i] === null) { last.textContent = `✗ malloc(${lastOp.req}) misslyckades`; last.className = 'last failed'; }
+      else last.textContent = `malloc(${lastOp.req}) → ${hex(lastOp.res[i])}`;
+    });
+    $('status').textContent = `Steg ${fmt(sim.steps)} · ${fmt(sim.live.size)} levande block`;
+    drawAll();
+  }
+
+  function record(r) { if (r) { lastOp = r; lastId = r.op === 'malloc' ? r.id : null; } return r; }
+
+  /* Träfftest och verktygstips */
+  function hit(p, e) {
+    const rc = p.canvas.getBoundingClientRect(), x = e.clientX - rc.left, y = e.clientY - rc.top;
+    const row = Math.floor(y / ROWH);
+    if (x < GUT || row < 0 || row >= ROWS) return null;
+    const byte = row * PAGE + Math.min(PAGE - 1, Math.floor((x - GUT) / (rc.width - GUT) * PAGE));
+    return p.view.find(b => byte >= b.a && byte < b.b) || null;
+  }
+  function onHover(p, e) {
+    const b = hit(p, e), tip = $('tip');
+    const id = b ? b.id : null;
+    p.canvas.style.cursor = id !== null ? 'pointer' : 'default';
+    if (!b) { tip.style.display = 'none'; }
+    else {
+      tip.innerHTML = '';
+      b.tip.concat(id !== null ? ['Klicka för free'] : []).forEach((line, k) => {
+        const n = document.createElement(k ? 'em' : 'span'); n.textContent = line; tip.appendChild(n);
+      });
+      tip.style.display = 'block';
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      tip.style.left = Math.max(8, Math.min(e.clientX + 14, window.innerWidth - tw - 8)) + 'px';
+      tip.style.top = (e.clientY + 18 + th > window.innerHeight ? e.clientY - th - 10 : e.clientY + 18) + 'px';
+    }
+    if (id !== hoverId) { hoverId = id; drawAll(); }
+  }
+
+  /* Arbetslast */
+  function newGen() { gen = makeWorkload($('workload').value, sim, fillFrac); }
+  function step() { for (let i = 0; i < 4; i++) { if (record(gen())) return; } }
+  function stop() { clearInterval(timer); timer = null; $('btn-run').textContent = 'Kör'; }
+  function start() {
+    $('btn-run').textContent = 'Paus';
+    timer = setInterval(() => { step(); render(); }, 1000 / +$('speed').value);
+  }
+
+  $('btn-run').addEventListener('click', () => timer ? stop() : start());
+  $('btn-step').addEventListener('click', () => { step(); render(); });
+  $('btn-reset').addEventListener('click', () => { sim.reset(); lastOp = null; lastId = null; newGen(); render(); });
+  $('workload').addEventListener('change', () => {
+    const scripted = $('workload').value === 'holes' || $('workload').value === 'grow';
+    $('fill').disabled = scripted;
+    sim.reset(); lastOp = null; lastId = null; newGen(); render();
+  });
+  $('speed').addEventListener('input', () => {
+    $('speed-out').textContent = $('speed').value + ' steg/s';
+    if (timer) { clearInterval(timer); start(); }
+  });
+  $('fill').addEventListener('input', () => { $('fill-out').textContent = $('fill').value + ' %'; });
+  function doMalloc() {
+    const n = Math.max(1, Math.min(HEAP, Math.floor(+$('size').value) || 1));
+    $('size').value = n;
+    record(sim.malloc(n)); render();
+  }
+  $('btn-malloc').addEventListener('click', doMalloc);
+  $('size').addEventListener('keydown', e => { if (e.key === 'Enter') doMalloc(); });
+  $('btn-free').addEventListener('click', () => { if (sim.live.size) { record(sim.free(sim.randomLive())); render(); } });
+
+  /* Omritning vid storleks- och temabyte */
+  new ResizeObserver(drawAll).observe($('panels'));
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', drawAll);
+  new MutationObserver(drawAll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawAll);
+
+  /* Startläge: en bit in i den blandade arbetslasten */
+  newGen();
+  for (let i = 0; i < 160; i++) step();
+  render();
+})();
+</script>
+</body>
+</html>
